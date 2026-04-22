@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Generated outputs
+*(cleaned).docx
+*(cleaned).pdf
+
+# Local test fixtures
+水印*.doc
+水印*.docx
+水印*.pdf
+
+# OS / editor
+.DS_Store
+Thumbs.db
