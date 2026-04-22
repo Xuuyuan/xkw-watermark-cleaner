@@ -14,6 +14,9 @@
 - `clean_watermark_doc.py`
 - `clean_watermark_docx.py`
 - `clean_watermark_pdf.py`
+- `context_menu_handler.py`
+- `install_context_menu.py`
+- `uninstall_context_menu.py`
 
 ## 功能
 
@@ -23,6 +26,7 @@
 - 清理 `DOCX` 自定义属性中的残留字段
 - 清理 `PDF` 的 `/Info`、XMP 等底层元数据
 - 支持批量处理 `doc`、`docx`、`pdf`
+- 支持 Windows 右键菜单“清除学科网水印”
 
 ## 环境要求
 
@@ -72,7 +76,43 @@ python clean_watermark.py . -r
 python clean_watermark.py . -r -o out
 ```
 
+## 右键菜单集成
+
+### 安装右键菜单
+
+```bash
+python install_context_menu.py
+```
+
+安装完成后，在 Windows 资源管理器中右键这些文件类型时，会出现：
+
+- `.doc`
+- `.docx`
+- `.pdf`
+
+菜单项名称：
+
+- `清除学科网水印`
+
+### 卸载右键菜单
+
+```bash
+python uninstall_context_menu.py
+```
+
+### 右键菜单行为
+
+- 点击后会在原文件目录下原地生成对应的清理后文件
+- 输出文件命名仍遵循 `(cleaned)` 规则
+- 会在同目录追加写入 `xkw-watermark-cleaner.log`
+- 日志会记录每一条清理提示，便于回溯处理过程
+
 ## 说明
 
 - 脚本会自动跳过已经带有 `(cleaned)` 标记的文件
 - `DOC` 文件会先转换为 `DOCX`，再执行深度清理
+- `DOC` 处理依赖本机已安装 Microsoft Word
+- 右键菜单注册到当前用户注册表 `HKCU`，不会影响系统中的其他用户
+- 右键菜单默认调用当前 Python 环境中的 `pythonw.exe`；若不存在则回退到 `python.exe`
+- 如果资源管理器没有立即显示右键菜单，刷新文件夹或重新打开资源管理器窗口即可
+- `xkw-watermark-cleaner.log` 为追加写入，不会在每次运行时覆盖旧记录

@@ -6,6 +6,7 @@ __pycache__/
 # Generated outputs
 *(cleaned).docx
 *(cleaned).pdf
+xkw-watermark-cleaner.log
 
 # Local test fixtures
 水印*.doc
