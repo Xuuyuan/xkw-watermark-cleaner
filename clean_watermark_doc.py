@@ -7,6 +7,7 @@ from clean_watermark_docx import clean_docx
 
 
 WD_FORMAT_XML_DOCUMENT = 12
+WD_FORMAT_BINARY_DOCUMENT = 0
 
 
 def build_output_path(input_path):
@@ -25,6 +26,24 @@ def convert_doc_to_docx(input_doc_path, output_docx_path):
         word.DisplayAlerts = 0
         document = word.Documents.Open(os.path.abspath(input_doc_path), ReadOnly=True)
         document.SaveAs(os.path.abspath(output_docx_path), FileFormat=WD_FORMAT_XML_DOCUMENT)
+    finally:
+        if document is not None:
+            document.Close(False)
+        if word is not None:
+            word.Quit()
+
+
+def convert_docx_to_doc(input_docx_path, output_doc_path):
+    word = None
+    document = None
+
+    try:
+        print(f"正在将清理结果写回 DOC: {output_doc_path}")
+        word = DispatchEx("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0
+        document = word.Documents.Open(os.path.abspath(input_docx_path), ReadOnly=True)
+        document.SaveAs(os.path.abspath(output_doc_path), FileFormat=WD_FORMAT_BINARY_DOCUMENT)
     finally:
         if document is not None:
             document.Close(False)

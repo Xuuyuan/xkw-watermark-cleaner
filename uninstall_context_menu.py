@@ -1,7 +1,7 @@
 import winreg
 
 
-MENU_KEY_NAME = "xkw-watermark-cleaner"
+MENU_KEY_NAMES = ["xkw-watermark-cleaner", "xkw-watermark-cleaner-overwrite"]
 TARGET_EXTENSIONS = [".doc", ".docx", ".pdf"]
 
 
@@ -21,8 +21,9 @@ def delete_tree(root, subkey):
 
 def main():
     for extension in TARGET_EXTENSIONS:
-        subkey = fr"Software\Classes\SystemFileAssociations\{extension}\shell\{MENU_KEY_NAME}"
-        delete_tree(winreg.HKEY_CURRENT_USER, subkey)
+        for menu_key_name in MENU_KEY_NAMES:
+            subkey = fr"Software\Classes\SystemFileAssociations\{extension}\shell\{menu_key_name}"
+            delete_tree(winreg.HKEY_CURRENT_USER, subkey)
 
     print("右键菜单卸载完成。")
 

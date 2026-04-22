@@ -1,5 +1,6 @@
 import argparse
 import os
+import tempfile
 from pathlib import Path
 
 from clean_watermark_doc import clean_doc
@@ -66,6 +67,43 @@ def clean_one_file(path, output_dir=None):
         return clean_docx(str(path), output_path)
     if suffix == ".pdf":
         return clean_pdf(str(path), output_path)
+
+    raise ValueError(f"不支持的文件类型: {path}")
+
+
+def clean_one_file_overwrite(path):
+    path = Path(path).resolve()
+    suffix = path.suffix.lower()
+    output_dir = path.parent
+
+    if suffix == ".doc":
+        output_path = build_output_path(path)
+        print("DOC 文件不支持覆盖写回，将生成对应的清理后 DOCX 文件。")
+        return clean_doc(str(path), output_path)
+
+    if suffix == ".docx":
+        temp_fd, temp_output = tempfile.mkstemp(suffix=".docx", dir=output_dir)
+        os.close(temp_fd)
+        try:
+            clean_docx(str(path), temp_output)
+            os.replace(temp_output, path)
+            print(f"已覆盖源文件: {path}")
+            return str(path)
+        finally:
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
+
+    if suffix == ".pdf":
+        temp_fd, temp_output = tempfile.mkstemp(suffix=".pdf", dir=output_dir)
+        os.close(temp_fd)
+        try:
+            clean_pdf(str(path), temp_output)
+            os.replace(temp_output, path)
+            print(f"已覆盖源文件: {path}")
+            return str(path)
+        finally:
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
 
     raise ValueError(f"不支持的文件类型: {path}")
 
