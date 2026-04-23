@@ -14,6 +14,7 @@
 - `clean_watermark_doc.py`
 - `clean_watermark_docx.py`
 - `clean_watermark_pdf.py`
+- `config.json`
 - `context_menu_handler.py`
 - `install_context_menu.py`
 - `uninstall_context_menu.py`
@@ -75,6 +76,31 @@ python clean_watermark.py . -r
 ```bash
 python clean_watermark.py . -r -o out
 ```
+
+## 配置文件
+
+`config.json` 用于控制 `DOCX` 核心属性的处理方式：
+
+```json
+{
+  "metadata_keywords": ["学科网", "zxxk.com", "zxxk", "rbm.xkw.com", "xkw"],
+  "docx_core_properties": {
+    "override_enabled": false,
+    "values": {
+      "author": "User",
+      "comments": "",
+      "title": "清理后的文档",
+      "subject": "",
+      "keywords": ""
+    }
+  }
+}
+```
+
+- `override_enabled: false`：保守模式。`author`、`title` 等核心属性只有在命中 `metadata_keywords` 时才会被清空；没有明显残留则保持原值。
+- `override_enabled: true`：覆盖模式。按 `values` 中的值固定重写对应属性。
+- `values` 中某个字段设置为 `"-"` 时，即使开启覆盖模式，也不会改动该属性。
+- `docProps/custom.xml` 中包含 `metadata_keywords` 的自定义属性仍会被删除。
 
 ## 右键菜单集成
 
