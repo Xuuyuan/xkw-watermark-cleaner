@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import zipfile
@@ -20,6 +21,20 @@ BODY_DRAWING_KEYWORDS = ["学科网", "zxxk.com", "rbm.xkw.com", "xkw"]
 CUSTOM_PROPERTY_NS = {
     "cp": "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"
 }
+CONFIG_FILENAME = "config.json"
+DEFAULT_CONFIG = {
+    "metadata_keywords": METADATA_KEYWORDS,
+    "docx_core_properties": {
+        "override_enabled": False,
+        "values": {
+            "author": "User",
+            "comments": "",
+            "title": "清理后的文档",
+            "subject": "",
+            "keywords": "",
+        },
+    },
+}
 
 
 def build_output_path(input_path):
@@ -37,6 +52,45 @@ def first_matched_keyword(text, keywords):
         if keyword.lower() in lower_text:
             return keyword
     return None
+
+
+def load_config():
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILENAME)
+    config = {
+        "metadata_keywords": list(DEFAULT_CONFIG["metadata_keywords"]),
+        "docx_core_properties": {
+            "override_enabled": DEFAULT_CONFIG["docx_core_properties"]["override_enabled"],
+            "values": dict(DEFAULT_CONFIG["docx_core_properties"]["values"]),
+        },
+    }
+
+    if not os.path.exists(config_path):
+        return config
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            user_config = json.load(config_file)
+    except Exception as exc:
+        print(f"读取配置文件失败，使用默认配置: {exc}")
+        return config
+
+    metadata_keywords = user_config.get("metadata_keywords")
+    if isinstance(metadata_keywords, list) and metadata_keywords:
+        config["metadata_keywords"] = [str(item) for item in metadata_keywords]
+
+    core_properties = user_config.get("docx_core_properties")
+    if isinstance(core_properties, dict):
+        override_enabled = core_properties.get("override_enabled")
+        if isinstance(override_enabled, bool):
+            config["docx_core_properties"]["override_enabled"] = override_enabled
+
+        values = core_properties.get("values")
+        if isinstance(values, dict):
+            for key in config["docx_core_properties"]["values"]:
+                if key in values:
+                    config["docx_core_properties"]["values"][key] = str(values[key])
+
+    return config
 
 
 def iter_extents(element):
@@ -142,24 +196,29 @@ def clean_document_body(doc):
         clean_body_paragraph(paragraph, index)
 
 
-def clean_core_properties(doc):
+def clean_core_properties(doc, config):
     try:
+        core_config = config["docx_core_properties"]
+        keywords = config["metadata_keywords"]
+        override_enabled = core_config["override_enabled"]
+        configured_values = core_config["values"]
         props = doc.core_properties
-        if props.author:
-            print(f"已定位并重写核心属性 author: {props.author}")
-        props.author = "User"
-        if props.comments:
-            print(f"已定位并清除核心属性 comments: {props.comments}")
-        props.comments = ""
-        if props.title:
-            print(f"已定位并重写核心属性 title: {props.title}")
-        props.title = "清理后的文档"
-        if props.subject:
-            print(f"已定位并重写核心属性 subject: {props.subject}")
-        props.subject = ""
-        if props.keywords:
-            print(f"已定位并清除核心属性 keywords: {props.keywords}")
-        props.keywords = ""
+
+        for prop_name, configured_value in configured_values.items():
+            current_value = getattr(props, prop_name, "") or ""
+
+            if override_enabled:
+                if configured_value == "-":
+                    continue
+                if current_value != configured_value:
+                    print(f"已按配置重写核心属性 {prop_name}: {current_value}")
+                setattr(props, prop_name, configured_value)
+                continue
+
+            matched_keyword = first_matched_keyword(current_value, keywords)
+            if matched_keyword:
+                print(f"已定位并清除核心属性 {prop_name}: {current_value}，命中关键词: {matched_keyword}")
+                setattr(props, prop_name, "")
     except Exception:
         pass
 
@@ -196,14 +255,14 @@ def rebuild_docx_without_custom_property_residue(source_docx_path, target_docx_p
             os.remove(temp_path)
 
 
-def save_cleaned_docx(doc, output_path):
+def save_cleaned_docx(doc, output_path, metadata_keywords):
     output_dir = os.path.dirname(os.path.abspath(output_path)) or os.getcwd()
     temp_doc_fd, temp_doc_path = tempfile.mkstemp(suffix=".docx", dir=output_dir)
     os.close(temp_doc_fd)
 
     try:
         doc.save(temp_doc_path)
-        rebuild_docx_without_custom_property_residue(temp_doc_path, output_path, METADATA_KEYWORDS)
+        rebuild_docx_without_custom_property_residue(temp_doc_path, output_path, metadata_keywords)
     finally:
         if os.path.exists(temp_doc_path):
             os.remove(temp_doc_path)
@@ -217,11 +276,12 @@ def clean_docx(input_path, output_path=None):
         output_path = build_output_path(input_path)
 
     print("正在扫描并清理 DOCX 水印...")
+    config = load_config()
     doc = Document(input_path)
     clean_section_headers_and_footers(doc)
     clean_document_body(doc)
-    clean_core_properties(doc)
-    save_cleaned_docx(doc, output_path)
+    clean_core_properties(doc, config)
+    save_cleaned_docx(doc, output_path, config["metadata_keywords"])
     return output_path
 
 
