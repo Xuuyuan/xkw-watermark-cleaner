@@ -15,5 +15,19 @@
       "subject": "",
       "keywords": ""
     }
+  },
+  "pdf_metadata": {
+    "override_enabled": false,
+    "clear_xmp_metadata": "if_keyword",
+    "values": {
+      "title": "",
+      "author": "",
+      "subject": "",
+      "keywords": "",
+      "creator": "-",
+      "producer": "-",
+      "creationDate": "-",
+      "modDate": "-"
+    }
   }
 }

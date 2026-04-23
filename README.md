@@ -93,6 +93,20 @@ python clean_watermark.py . -r -o out
       "subject": "",
       "keywords": ""
     }
+  },
+  "pdf_metadata": {
+    "override_enabled": false,
+    "clear_xmp_metadata": "if_keyword",
+    "values": {
+      "title": "",
+      "author": "",
+      "subject": "",
+      "keywords": "",
+      "creator": "-",
+      "producer": "-",
+      "creationDate": "-",
+      "modDate": "-"
+    }
   }
 }
 ```
@@ -101,6 +115,7 @@ python clean_watermark.py . -r -o out
 - `override_enabled: true`：覆盖模式。按 `values` 中的值固定重写对应属性。
 - `values` 中某个字段设置为 `"-"` 时，即使开启覆盖模式，也不会改动该属性。
 - `docProps/custom.xml` 中包含 `metadata_keywords` 的自定义属性仍会被删除。
+- `pdf_metadata.clear_xmp_metadata` 可设为 `if_keyword`、`always`、`never`，分别表示命中关键词才清除 XMP、总是清除 XMP、永不清除 XMP。
 
 ## 右键菜单集成
 
