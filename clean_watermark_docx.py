@@ -1,4 +1,3 @@
-import json
 import os
 import tempfile
 import zipfile
@@ -6,6 +5,8 @@ import zipfile
 from docx import Document
 from docx.shared import Inches
 from lxml import etree
+
+from cleaner_config import load_config
 
 
 SIZE_THRESHOLD = Inches(0.2)
@@ -20,20 +21,6 @@ METADATA_KEYWORDS = ["学科网", "zxxk.com", "rbm.xkw.com", "xkw"]
 BODY_DRAWING_KEYWORDS = ["学科网", "zxxk.com", "rbm.xkw.com", "xkw"]
 CUSTOM_PROPERTY_NS = {
     "cp": "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"
-}
-CONFIG_FILENAME = "config.json"
-DEFAULT_CONFIG = {
-    "metadata_keywords": METADATA_KEYWORDS,
-    "docx_core_properties": {
-        "override_enabled": False,
-        "values": {
-            "author": "User",
-            "comments": "",
-            "title": "清理后的文档",
-            "subject": "",
-            "keywords": "",
-        },
-    },
 }
 
 
@@ -52,45 +39,6 @@ def first_matched_keyword(text, keywords):
         if keyword.lower() in lower_text:
             return keyword
     return None
-
-
-def load_config():
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILENAME)
-    config = {
-        "metadata_keywords": list(DEFAULT_CONFIG["metadata_keywords"]),
-        "docx_core_properties": {
-            "override_enabled": DEFAULT_CONFIG["docx_core_properties"]["override_enabled"],
-            "values": dict(DEFAULT_CONFIG["docx_core_properties"]["values"]),
-        },
-    }
-
-    if not os.path.exists(config_path):
-        return config
-
-    try:
-        with open(config_path, "r", encoding="utf-8") as config_file:
-            user_config = json.load(config_file)
-    except Exception as exc:
-        print(f"读取配置文件失败，使用默认配置: {exc}")
-        return config
-
-    metadata_keywords = user_config.get("metadata_keywords")
-    if isinstance(metadata_keywords, list) and metadata_keywords:
-        config["metadata_keywords"] = [str(item) for item in metadata_keywords]
-
-    core_properties = user_config.get("docx_core_properties")
-    if isinstance(core_properties, dict):
-        override_enabled = core_properties.get("override_enabled")
-        if isinstance(override_enabled, bool):
-            config["docx_core_properties"]["override_enabled"] = override_enabled
-
-        values = core_properties.get("values")
-        if isinstance(values, dict):
-            for key in config["docx_core_properties"]["values"]:
-                if key in values:
-                    config["docx_core_properties"]["values"][key] = str(values[key])
-
-    return config
 
 
 def iter_extents(element):
