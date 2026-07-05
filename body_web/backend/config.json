@@ -1,5 +1,5 @@
 {
-  "remove_all_header_content": false,
+  "remove_all_header_content": true,
   "metadata_keywords": [
     "学科网",
     "zxxk.com",
@@ -26,9 +26,7 @@
       "subject": "",
       "keywords": "",
       "creator": "-",
-      "producer": "-",
-      "creationDate": "-",
-      "modDate": "-"
+      "producer": "-"
     }
   }
 }
