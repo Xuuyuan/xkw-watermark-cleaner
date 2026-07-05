@@ -3,6 +3,7 @@ import tempfile
 import zipfile
 
 from docx import Document
+from docx.oxml.ns import qn
 from docx.shared import Inches
 from lxml import etree
 
@@ -107,18 +108,46 @@ def clean_header_footer_container(container, location_label):
             paragraph.text = ""
 
 
-def clean_section_headers_and_footers(doc):
+def clear_container_all(container, location_label):
+    """Remove ALL content from a header/footer container, leaving one empty paragraph."""
+    element = container._element
+    children = list(element)
+
+    if not children:
+        return
+
+    has_text = any(text.strip() for text in element.itertext())
+    has_drawings = bool(iter_drawings(element))
+    has_shapes = bool(iter_shapes(element))
+    has_tables = bool(element.xpath('.//*[local-name()="tbl"]'))
+
+    if not (has_text or has_drawings or has_shapes or has_tables):
+        return
+
+    for child in children:
+        element.remove(child)
+
+    # OOXML requires at least one block-level element (paragraph) in a header
+    etree.SubElement(element, qn("w:p"))
+
+    print(f"已清空{location_label}全部内容")
+
+
+def clean_section_headers_and_footers(doc, remove_all_header_content=False):
     for section in doc.sections:
         containers = [
-            ("页眉", section.header),
-            ("页脚", section.footer),
-            ("首页页眉", section.first_page_header),
-            ("首页页脚", section.first_page_footer),
-            ("偶数页页眉", section.even_page_header),
-            ("偶数页页脚", section.even_page_footer),
+            ("页眉", section.header, True),
+            ("页脚", section.footer, False),
+            ("首页页眉", section.first_page_header, True),
+            ("首页页脚", section.first_page_footer, False),
+            ("偶数页页眉", section.even_page_header, True),
+            ("偶数页页脚", section.even_page_footer, False),
         ]
-        for location_label, container in containers:
-            clean_header_footer_container(container, location_label)
+        for location_label, container, is_header in containers:
+            if remove_all_header_content and is_header:
+                clear_container_all(container, location_label)
+            else:
+                clean_header_footer_container(container, location_label)
 
 
 def clean_body_paragraph(paragraph, paragraph_index):
@@ -216,7 +245,7 @@ def save_cleaned_docx(doc, output_path, metadata_keywords):
             os.remove(temp_doc_path)
 
 
-def clean_docx(input_path, output_path=None):
+def clean_docx(input_path, output_path=None, remove_all_header=None):
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"找不到文件: {input_path}")
 
@@ -225,8 +254,10 @@ def clean_docx(input_path, output_path=None):
 
     print("正在扫描并清理 DOCX 水印...")
     config = load_config()
+    if remove_all_header is not None:
+        config["remove_all_header_content"] = remove_all_header
     doc = Document(input_path)
-    clean_section_headers_and_footers(doc)
+    clean_section_headers_and_footers(doc, remove_all_header_content=config.get("remove_all_header_content", False))
     clean_document_body(doc)
     clean_core_properties(doc, config)
     save_cleaned_docx(doc, output_path, config["metadata_keywords"])

@@ -5,6 +5,7 @@ import os
 CONFIG_FILENAME = "config.json"
 DEFAULT_METADATA_KEYWORDS = ["学科网", "zxxk.com", "zxxk", "rbm.xkw.com", "xkw"]
 DEFAULT_CONFIG = {
+    "remove_all_header_content": False,
     "metadata_keywords": DEFAULT_METADATA_KEYWORDS,
     "docx_core_properties": {
         "override_enabled": False,
@@ -62,6 +63,7 @@ def merge_property_config(config, user_config, section_name):
 
 def build_default_config():
     return {
+        "remove_all_header_content": DEFAULT_CONFIG["remove_all_header_content"],
         "metadata_keywords": list(DEFAULT_CONFIG["metadata_keywords"]),
         "docx_core_properties": {
             "override_enabled": DEFAULT_CONFIG["docx_core_properties"]["override_enabled"],
@@ -88,6 +90,10 @@ def load_config():
     except Exception as exc:
         print(f"读取配置文件失败，使用默认配置: {exc}")
         return config
+
+    remove_all_header = user_config.get("remove_all_header_content")
+    if isinstance(remove_all_header, bool):
+        config["remove_all_header_content"] = remove_all_header
 
     metadata_keywords = user_config.get("metadata_keywords")
     if isinstance(metadata_keywords, list) and metadata_keywords:
