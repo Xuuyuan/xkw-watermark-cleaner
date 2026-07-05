@@ -1,6 +1,6 @@
 # xkw-watermark-cleaner 学科网下载文件水印清理工具
 
-用于清理从学科网下载的 `DOC`、`DOCX`、`PDF` 文件中的相关水印。
+用于清理从学科网下载的 `DOC`、`DOCX`、`PDF` 文件中的相关水印以及下载的文件夹一键解压缩后处理水印
 
 ## 声明
 
@@ -22,12 +22,13 @@
 ## 功能
 
 - 清理页眉、页脚中的学科网相关文字或对象
+- 支持一键删除页眉中的所有内容（不限关键词）
 - 清理正文中的动态水印标记
 - 清理 `DOCX` 中绘图对象的隐藏描述属性
 - 清理 `DOCX` 自定义属性中的残留字段
 - 清理 `PDF` 的 `/Info`、XMP 等底层元数据
 - 支持批量处理 `doc`、`docx`、`pdf`
-- 支持 Windows 右键菜单“清除学科网水印”
+- 支持 Windows 右键菜单"清除学科网水印"
 
 ## 环境要求
 
@@ -77,12 +78,26 @@ python clean_watermark.py . -r
 python clean_watermark.py . -r -o out
 ```
 
+### 5. 删除页眉全部内容
+
+```bash
+python clean_watermark.py 你的文件.docx --remove-headers
+python clean_watermark.py . -r --remove-headers
+```
+
+添加 `--remove-headers` 参数后，将删除页眉中的所有内容（文本、图片、表格等），而不仅是匹配关键词的水印内容。页脚仍按原逻辑进行关键词匹配清理。
+
+也可以通过配置文件永久开启此功能（见下方配置文件说明）。
+
+> 右键菜单默认就会删除页眉全部内容，无需额外参数。
+
 ## 配置文件
 
 `config.json` 用于控制 `DOCX` 核心属性的处理方式：
 
 ```json
 {
+  "remove_all_header_content": false,
   "metadata_keywords": ["学科网", "zxxk.com", "zxxk", "rbm.xkw.com", "xkw"],
   "docx_core_properties": {
     "override_enabled": false,
@@ -111,6 +126,7 @@ python clean_watermark.py . -r -o out
 }
 ```
 
+- `remove_all_header_content: false`：默认关闭。设为 `true` 后，每次清理时会删除页眉中的所有内容（不限关键词），页脚仍按关键词匹配清理。也可通过命令行 `--remove-headers` 参数临时启用，优先级高于配置文件。
 - `override_enabled: false`：保守模式。`author`、`title` 等核心属性只有在命中 `metadata_keywords` 时才会被清空；没有明显残留则保持原值。
 - `override_enabled: true`：覆盖模式。按 `values` 中的值固定重写对应属性。
 - `values` 中某个字段设置为 `"-"` 时，即使开启覆盖模式，也不会改动该属性。
@@ -125,16 +141,28 @@ python clean_watermark.py . -r -o out
 python install_context_menu.py
 ```
 
-安装完成后，在 Windows 资源管理器中右键这些文件类型时，会出现：
+安装完成后，在 Windows 资源管理器中右键以下目标时，会出现对应菜单项：
 
-- `.doc`
-- `.docx`
-- `.pdf`
-
-菜单项名称：
+**文件右键菜单**（`.doc` `.docx` `.pdf`）：
 
 - `清除学科网水印`
 - `清除学科网水印（覆盖）`
+
+
+**压缩包右键菜单**（`.zip` `.rar` `.7z`）:
+
+（说明：依赖Bandzip与WinRAR）
+- `解压缩压缩包`
+- `解压缩嵌套压缩包`
+- `压缩包内文件平铺至文件夹根目录`
+- `执行水印清理`（默认覆盖模式）
+
+**文件夹右键菜单**：
+
+- `清除学科网水印（文件夹内所有文件）`
+- `清除学科网水印（文件夹内所有文件，覆盖）`
+
+> 右键菜单执行时会自动删除页眉中的所有内容（不限关键词），同时保留原有的水印清理功能。页脚仍按关键词匹配清理。
 
 ### 卸载右键菜单
 
@@ -144,14 +172,29 @@ python uninstall_context_menu.py
 
 ### 右键菜单行为
 
+**文件右键：**
+
 - `清除学科网水印`
   - 在原文件目录下原地生成对应的清理后文件
   - 输出文件命名遵循 `(cleaned)` 规则
+  - 自动删除页眉全部内容（不限关键词）
 - `清除学科网水印（覆盖）`
   - 对 `docx` / `pdf`：直接覆盖源文件
   - 对 `doc`：不会回写原始 `doc`，仍然生成对应的 `(cleaned).docx`
-- 会在同目录追加写入 `xkw-watermark-cleaner.log`
-- 日志会记录每一条清理提示，便于回溯处理过程
+  - 自动删除页眉全部内容（不限关键词）
+
+**文件夹右键：**
+
+- `清除学科网水印（文件夹内所有文件）`
+  - 检测文件夹内的 `.doc`、`.docx`、`.pdf` 文件（含子文件夹）
+  - 为每个文件原地生成 `(cleaned)` 清理后文件
+  - 自动删除页眉全部内容（不限关键词）
+- `清除学科网水印（文件夹，覆盖）`
+  - 检测文件夹内的 `.doc`、`.docx`、`.pdf` 文件（含子文件夹）
+  - 对 `docx` / `pdf` 直接覆盖源文件，`doc` 生成 `(cleaned).docx`
+  - 自动删除页眉全部内容（不限关键词）
+- 会在文件夹内追加写入 `xkw-watermark-cleaner.log`
+- 日志会记录每个文件的清理提示，便于回溯处理过程
 
 ## 说明
 
