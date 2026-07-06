@@ -33,7 +33,7 @@
 ## 环境要求
 
 - Windows
-- Python 3.10+
+- Python 3.10+  3.13-（推荐3.12）
 - 已安装 Microsoft Word
 
 其中 `DOC` 处理依赖 Word COM 自动化，因此仅适用于安装了 Word 的 Windows 环境。
