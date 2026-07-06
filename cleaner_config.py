@@ -102,3 +102,18 @@ def load_config():
     merge_property_config(config, user_config, "docx_core_properties")
     merge_property_config(config, user_config, "pdf_metadata")
     return config
+
+
+def save_config(config):
+    """保存配置到 config.json"""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILENAME)
+    # 只保存需要的字段（简化版）
+    simple_config = {
+        "metadata_keywords": config.get("metadata_keywords", DEFAULT_METADATA_KEYWORDS),
+        "remove_headers": config.get("remove_headers", True),
+        "clean_metadata": config.get("clean_metadata", True),
+        "remove_all_images": config.get("remove_all_images", False),
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(simple_config, f, ensure_ascii=False, indent=2)
+    return True

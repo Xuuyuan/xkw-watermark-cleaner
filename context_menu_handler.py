@@ -1,9 +1,9 @@
 import contextlib
 import os
 import shutil
-import subprocess
 import sys
 import traceback
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from clean_watermark import clean_one_file, clean_one_file_overwrite, collect_fi
 
 
 LOG_FILENAME = "xkw-watermark-cleaner.log"
-ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
+ARCHIVE_EXTENSIONS = {".zip"}
 
 
 def append_log_header(log_file, target, overwrite, remove_headers, is_dir=False):
@@ -73,82 +73,23 @@ def process_directory(target_path, overwrite, remove_headers, log_file):
     return success_count == len(files)
 
 
-def find_extractor(archive_suffix):
-    """根据压缩包类型查找对应的解压程序路径。
-    查找顺序：PATH → 自定义环境变量 → 已知安装路径 → 回退。
-    """
-    if archive_suffix == ".rar":
-        exe_names = ["WinRAR.exe", "UnRAR.exe"]
-        env_var_names = ["WinRAR", "WINRAR", "WinRar"]
-        known_paths = [
-            Path(r"C:\Program Files\WinRAR\WinRAR.exe"),
-            Path(r"C:\Program Files (x86)\WinRAR\WinRAR.exe"),
-            Path(r"D:\My Program\WinRAR\WinRAR.exe"),
-            Path(r"D:\Program\WinRAR\WinRAR.exe"),
-            Path(r"D:\WinRAR\WinRAR.exe"),
-        ]
-        fallback = "WinRAR.exe"
-        tool_name = "WinRAR"
-    else:
-        # .zip / .7z 使用 Bandizip
-        exe_names = ["Bandizip.exe", "bz.exe"]
-        env_var_names = ["Bandzip", "Bandizip", "BANDIZIP"]
-        known_paths = [
-            Path(r"C:\Program Files\Bandizip\Bandizip.exe"),
-            Path(r"C:\Program Files\Bandizip\bz.exe"),
-            Path(r"D:\My Program\Bandzip\Bandizip.exe"),
-            Path(r"D:\Program\Bandzip\Bandizip.exe"),
-            Path(r"D:\Bandzip\Bandizip.exe"),
-        ]
-        fallback = "Bandizip.exe"
-        tool_name = "Bandizip"
-
-    # 1) 通过 PATH 搜索
-    for name in exe_names:
-        resolved = shutil.which(name)
-        if resolved:
-            return resolved, tool_name
-
-    # 2) 通过自定义环境变量搜索（如 WinRAR=..., Bandzip=...）
-    for var_name in env_var_names:
-        var_val = os.environ.get(var_name, "")
-        if var_val:
-            for name in exe_names:
-                candidate = Path(var_val) / name
-                if candidate.exists():
-                    return str(candidate), tool_name
-
-    # 3) 检查已知安装路径
-    for path in known_paths:
-        if path.exists():
-            return str(path), tool_name
-
-    # 4) 回退（大概率会报 FileNotFoundError）
-    return fallback, tool_name
-
-
 def extract_archive(archive_path, dest_dir):
-    """解压单个压缩包到目标目录（静默、无需确认）。"""
+    """使用 Python 内置 zipfile 解压 .zip 压缩包到目标目录。"""
     archive_path = Path(archive_path)
     suffix = archive_path.suffix.lower()
-    exe_path, tool = find_extractor(suffix)
 
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    if tool == "WinRAR":
-        # x=保留目录结构  -ibck=后台运行(无界面)  -y=全部确认
-        cmd = [exe_path, "x", "-ibck", "-y", str(archive_path), str(dest_dir) + "\\"]
-    else:
-        # Bandizip: x=解压  -o=输出目录  -y=全部确认
-        cmd = [exe_path, "x", "-o:" + str(dest_dir), "-y", str(archive_path)]
-
     print(f"正在解压: {archive_path.name} -> {dest_dir}")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0 and result.stderr:
-        print(f"解压警告 (exit={result.returncode}): {result.stderr.strip()}")
+
+    if suffix == ".zip":
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            zf.extractall(dest_dir)
     else:
-        print(f"解压完成: {archive_path.name}")
+        raise ValueError(f"不支持的压缩包格式: {suffix}")
+
+    print(f"解压完成: {archive_path.name}")
     return dest_dir
 
 

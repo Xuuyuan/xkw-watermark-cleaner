@@ -4,7 +4,7 @@ import winreg
 MENU_KEY_NAMES = ["xkw-watermark-cleaner", "xkw-watermark-cleaner-overwrite", "xkw-watermark-cleaner-archive"]
 ARCHIVE_MENU_KEY_NAME = "xkw-watermark-cleaner-archive"
 TARGET_EXTENSIONS = [".doc", ".docx", ".pdf"]
-ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z"]
+ARCHIVE_EXTENSIONS = [".zip"]
 
 
 def delete_tree(root, subkey):

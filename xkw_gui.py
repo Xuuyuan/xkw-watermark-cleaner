@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 学科网水印清理工具 - 图形用户界面 (PySide6)
-界面风格参考 PDFGuru，左侧导航 + 右侧主内容区。
+左侧导航 + 右侧主内容区。
 """
 
 import io
@@ -33,11 +33,11 @@ from clean_watermark import clean_one_file, clean_one_file_overwrite, collect_fi
 from cleaner_config import load_config, DEFAULT_METADATA_KEYWORDS
 
 # ─── 常量 ─────────────────────────────────────────────
-ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
+ARCHIVE_EXTENSIONS = {".zip"}
 DOC_EXTENSIONS = {".doc", ".docx", ".pdf"}
-SUPPORTED_EXTS_STR = ".doc  .docx  .pdf  .zip  .rar  .7z"
+SUPPORTED_EXTS_STR = ".doc  .docx  .pdf  .zip"
 
-# PDFGuru 风格配色
+# 风格配色
 PRIMARY = "#1677FF"
 PRIMARY_HOVER = "#4096FF"
 PRIMARY_LIGHT = "#E6F4FF"
@@ -423,7 +423,7 @@ class MainWindow(QMainWindow):
         title.setStyleSheet(f"""
             font-size: 16px; font-weight: bold; color: {TEXT_PRIMARY}; border: none; background: transparent;
         """)
-        subtitle = QLabel("支持 DOC / DOCX / PDF 水印清理，含压缩包批量处理")
+        subtitle = QLabel("支持 DOC / DOCX / PDF 水印清理，含 ZIP 压缩包批量处理")
         subtitle.setStyleSheet(f"font-size: 10px; color: {TEXT_SECONDARY}; border: none; background: transparent; padding-left: 6px;")
         version = QLabel("v2.1")
         version.setStyleSheet(f"font-size: 10px; color: {TEXT_SECONDARY}; border: none; background: transparent;")
@@ -803,8 +803,8 @@ class MainWindow(QMainWindow):
     def _select_files(self):
         files, _ = QFileDialog.getOpenFileNames(
             self, "选择文件", "",
-            "所有支持格式 (*.doc *.docx *.pdf *.zip *.rar *.7z);;"
-            "Word 文档 (*.doc *.docx);;PDF (*.pdf);;压缩包 (*.zip *.rar *.7z);;所有文件 (*)"
+            "所有支持格式 (*.doc *.docx *.pdf *.zip);;"
+            "Word 文档 (*.doc *.docx);;PDF (*.pdf);;压缩包 (*.zip);;所有文件 (*)"
         )
         if files:
             self._add_paths([Path(f) for f in files])
