@@ -57,21 +57,21 @@ def build_output_path(input_path, output_dir=None):
     return str(input_path.with_name(output_name).resolve())
 
 
-def clean_one_file(path, output_dir=None):
+def clean_one_file(path, output_dir=None, remove_all_header=None):
     suffix = path.suffix.lower()
     output_path = build_output_path(path, output_dir)
 
     if suffix == ".doc":
-        return clean_doc(str(path), output_path)
+        return clean_doc(str(path), output_path, remove_all_header=remove_all_header)
     if suffix == ".docx":
-        return clean_docx(str(path), output_path)
+        return clean_docx(str(path), output_path, remove_all_header=remove_all_header)
     if suffix == ".pdf":
-        return clean_pdf(str(path), output_path)
+        return clean_pdf(str(path), output_path, remove_all_header=remove_all_header)
 
     raise ValueError(f"不支持的文件类型: {path}")
 
 
-def clean_one_file_overwrite(path):
+def clean_one_file_overwrite(path, remove_all_header=None):
     path = Path(path).resolve()
     suffix = path.suffix.lower()
     output_dir = path.parent
@@ -79,13 +79,13 @@ def clean_one_file_overwrite(path):
     if suffix == ".doc":
         output_path = build_output_path(path)
         print("DOC 文件不支持覆盖写回，将生成对应的清理后 DOCX 文件。")
-        return clean_doc(str(path), output_path)
+        return clean_doc(str(path), output_path, remove_all_header=remove_all_header)
 
     if suffix == ".docx":
         temp_fd, temp_output = tempfile.mkstemp(suffix=".docx", dir=output_dir)
         os.close(temp_fd)
         try:
-            clean_docx(str(path), temp_output)
+            clean_docx(str(path), temp_output, remove_all_header=remove_all_header)
             os.replace(temp_output, path)
             print(f"已覆盖源文件: {path}")
             return str(path)
@@ -97,7 +97,7 @@ def clean_one_file_overwrite(path):
         temp_fd, temp_output = tempfile.mkstemp(suffix=".pdf", dir=output_dir)
         os.close(temp_fd)
         try:
-            clean_pdf(str(path), temp_output)
+            clean_pdf(str(path), temp_output, remove_all_header=remove_all_header)
             os.replace(temp_output, path)
             print(f"已覆盖源文件: {path}")
             return str(path)
@@ -113,6 +113,7 @@ def main():
     parser.add_argument("paths", nargs="*", default=["."], help="待处理的文件或目录，默认当前目录。")
     parser.add_argument("-r", "--recursive", action="store_true", help="递归扫描目录。")
     parser.add_argument("-o", "--output-dir", help="统一输出目录；不填则输出到原文件同目录。")
+    parser.add_argument("--remove-headers", action="store_true", help="删除页眉中的所有内容（不限关键词）。")
     args = parser.parse_args()
 
     files = collect_files(args.paths, recursive=args.recursive)
@@ -124,12 +125,14 @@ def main():
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     print(f"共发现 {len(files)} 个待处理文件。")
+    if args.remove_headers:
+        print("已启用删除页眉全部内容模式。")
     success_count = 0
 
     for file_path in files:
         print(f"\n开始处理: {file_path}")
         try:
-            output_path = clean_one_file(file_path, args.output_dir)
+            output_path = clean_one_file(file_path, args.output_dir, remove_all_header=args.remove_headers)
             print(f"处理完成: {output_path}")
             success_count += 1
         except Exception as exc:
