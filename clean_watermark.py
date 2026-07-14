@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -10,9 +11,14 @@ from clean_watermark_pdf import clean_pdf
 
 SUPPORTED_EXTENSIONS = {".doc", ".docx", ".pdf"}
 SKIP_MARKERS = ("(cleaned)",)
+# Word / WPS 等办公软件生成的临时锁文件（文件名以 ~$ 开头），不是真实文档，
+# 直接跳过，避免 python-docx 打开时报 “Package not found”。
+TEMP_LOCK_PREFIX = "~$"
 
 
 def should_skip(path):
+    if path.name.startswith(TEMP_LOCK_PREFIX):
+        return True
     return any(marker in path.stem for marker in SKIP_MARKERS)
 
 
@@ -58,6 +64,7 @@ def build_output_path(input_path, output_dir=None):
 
 
 def clean_one_file(path, output_dir=None, remove_all_header=None):
+    path = Path(path)
     suffix = path.suffix.lower()
     output_path = build_output_path(path, output_dir)
 
@@ -71,8 +78,30 @@ def clean_one_file(path, output_dir=None, remove_all_header=None):
     raise ValueError(f"不支持的文件类型: {path}")
 
 
+def _safe_overwrite(temp_output, dest_path):
+    """用临时文件覆盖目标文件。
+
+    若目标文件被其它进程占用（拒绝访问 / WinError 5），则退回生成
+    `原名(cleaned).扩展名` 的清理后副本，保证用户始终拿到可用结果，而非整次失败。
+    """
+    try:
+        os.replace(temp_output, dest_path)
+        print(f"已覆盖源文件: {dest_path}")
+        return str(dest_path)
+    except (PermissionError, OSError) as exc:
+        winerror = getattr(exc, "winerror", None)
+        if winerror == 5 or isinstance(exc, PermissionError) or "拒绝访问" in str(exc):
+            fallback = build_output_path(dest_path)
+            shutil.move(str(temp_output), str(fallback))
+            print(f"源文件被占用（拒绝访问），已改为生成清理后副本: {fallback}")
+            return str(fallback)
+        raise
+
+
 def clean_one_file_overwrite(path, remove_all_header=None):
-    path = Path(path).resolve()
+    # 注意：不要用 resolve()，它会通过卷挂载点把 C:\Users 改写为 D:\Users，
+    # 导致临时文件与目标落在不同盘符路径，os.replace 时触发拒绝访问。
+    path = Path(path).absolute()
     suffix = path.suffix.lower()
     output_dir = path.parent
 
@@ -86,24 +115,26 @@ def clean_one_file_overwrite(path, remove_all_header=None):
         os.close(temp_fd)
         try:
             clean_docx(str(path), temp_output, remove_all_header=remove_all_header)
-            os.replace(temp_output, path)
-            print(f"已覆盖源文件: {path}")
-            return str(path)
+            return _safe_overwrite(temp_output, path)
         finally:
             if os.path.exists(temp_output):
-                os.remove(temp_output)
+                try:
+                    os.remove(temp_output)
+                except OSError:
+                    pass
 
     if suffix == ".pdf":
         temp_fd, temp_output = tempfile.mkstemp(suffix=".pdf", dir=output_dir)
         os.close(temp_fd)
         try:
             clean_pdf(str(path), temp_output, remove_all_header=remove_all_header)
-            os.replace(temp_output, path)
-            print(f"已覆盖源文件: {path}")
-            return str(path)
+            return _safe_overwrite(temp_output, path)
         finally:
             if os.path.exists(temp_output):
-                os.remove(temp_output)
+                try:
+                    os.remove(temp_output)
+                except OSError:
+                    pass
 
     raise ValueError(f"不支持的文件类型: {path}")
 

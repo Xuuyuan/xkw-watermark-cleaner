@@ -46,10 +46,12 @@ a = Analysis(
         ('clean_watermark_pdf.py', '.'),
         ('cleaner_config.py', '.'),
         ('context_menu_handler.py', '.'),
+        ('xkw.ico', '.'),
     ],
     hiddenimports=[
         'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets',
         'docx', 'fitz', 'win32com.client',
+        'context_menu_handler',
     ],
     excludes=EXCLUDE_MODULES,
     cipher=None,
@@ -72,7 +74,8 @@ exe = EXE(
     upx_flags='--best --lzma',
     console=False,
     disable_windowed_traceback=False,
-    icon=None,
+    icon='xkw.ico' if os.path.exists('xkw.ico') else None,
+    contents_directory='.',   # 扁平布局：dll 与 exe 放一起，不生成 _internal 子目录
 )
 
 coll = COLLECT(
@@ -85,4 +88,5 @@ coll = COLLECT(
     upx_exclude=['vcruntime140.dll', 'python3.dll', 'VCRUNTIME140_1.dll'],
     upx_flags='--best --lzma',
     name='xkw_standalone',
+    contents_directory='.',   # 与 EXE 一致：扁平布局，不生成 _internal 子目录
 )

@@ -204,16 +204,6 @@ python uninstall_context_menu.py
   - 清除空白文件夹
 -`执行水印清理`（默认覆盖模式）
 
-## 说明
-
-- 脚本会自动跳过已经带有 `(cleaned)` 标记的文件
-- `DOC` 文件会先转换为 `DOCX`，再执行深度清理
-- `DOC` 处理依赖本机已安装 Microsoft Word
-- 右键菜单注册到当前用户注册表 `HKCU`，不会影响系统中的其他用户
-- 右键菜单默认调用当前 Python 环境中的 `pythonw.exe`；若不存在则回退到 `python.exe`
-- 如果资源管理器没有立即显示右键菜单，刷新文件夹或重新打开资源管理器窗口即可
-- `xkw-watermark-cleaner.log` 为追加写入，不会在每次运行时覆盖旧记录
-
 ## 构建打包
 
 本项目提供 `build.py` 统一构建脚本，可一键打包出两个独立可执行版本。
@@ -221,14 +211,14 @@ python uninstall_context_menu.py
 ### 构建环境
 
 - Windows
-- Python 3.10+
-- 已安装 PyInstaller、py7zr（打包 7z 分发包用）
+- Python 3.10+（推荐 3.12）
+- 已安装 PyInstaller、PySide6（完整版界面依赖）
 - 可选：UPX（用于压缩 DLL，减小体积）
 
 安装构建依赖：
 
 ```bash
-pip install pyinstaller py7zr
+pip install pyinstaller PySide6
 ```
 
 ### 构建命令
@@ -248,11 +238,40 @@ python build.py simplified
 
 | 版本 | 路径 | 说明 |
 |------|------|------|
-| 完整版 | `body/学科网水印清理工具_独立版.exe` | PySide6 界面，onedir 模式（文件夹含 exe + dll） |
-| 完整版压缩包 | `body_standalone.7z` | 7z 超高压缩分发包，适合分发 |
-| 精简版 | `body_simplified/学科网水印清理工具_精简版.exe` | tkinter 界面，onefile 模式（单个 exe） |
+| 完整版 | `body/xkw_standalone.exe` | PySide6 图形界面，扁平 onedir（exe 与 dll 直接同目录，不生成 `_internal` 子文件夹） |
+| 精简版 | `body_simplified/xkw_simplified.exe` | tkinter 图形界面，onefile 单文件 |
+
+> 不再生成 `body_standalone.7z` 分发包，分发时直接复制整个 `body/` 文件夹即可。
 
 ### 两个版本的区别
 
-- **完整版**：使用 PySide6（Qt6）界面，功能最完整，启动需加载多个 DLL，首次启动稍慢
-- **精简版**：使用 tkinter 界面，单 exe 文件，体积小、启动快，适合快速使用")
+- **完整版**：使用 PySide6（Qt6）界面，功能最完整（含图形化文件列表、处理日志面板、各选项开关），启动需加载多个 DLL，首次启动稍慢。
+- **精简版**：使用 tkinter 界面，单 exe 文件，体积小、启动快，适合快速使用。
+
+## 图形界面（GUI）
+
+完整版 `body/xkw_standalone.exe` 与精简版 `body_simplified/xkw_simplified.exe` 均为图形界面，双击即可运行（无需命令行参数）。其中完整版（PySide6）界面布局为：
+
+- **左侧：文件列表** —— 添加文件 / 文件夹后列出待处理项，支持勾选、全选、反选、删除选中、清空列表。
+- **右侧：处理日志** —— 实时显示每个文件的处理状态与提示，可清空。
+
+完整版主界面提供以下选项（默认均勾选）：
+
+- **覆盖源文件（不生成 (cleaned) 副本）**：开启后直接覆盖原文件；关闭则输出 `xxx(cleaned).xxx`。
+- **删除页眉全部内容**：开启后删除页眉中所有内容（不限关键词）。
+- **平铺到文件夹（压缩包与子文件夹都展开到当前文件夹）**：处理压缩包 / 文件夹时，将内容展开到同一层，不再嵌套。
+- **删除文件名中的『精品解析：』字段**：开启后，处理完成后自动将文件名（含压缩包内文件 / 文件夹名）中的 `精品解析：` 字样去掉并重命名（非删除文件）；关闭则保留原名。
+
+> 命令行 / 右键菜单模式默认开启「精品解析：」字段去除；如需关闭，可在调用 `context_menu_handler.py` 时附加 `--no-strip-marker` 参数。
+
+## 说明
+
+- 脚本会自动跳过已经带有 `(cleaned)` 标记的文件
+- `DOC` 文件会先转换为 `DOCX`，再执行深度清理
+- `DOC` 处理依赖本机已安装 Microsoft Word（或 WPS）
+- 压缩包仅支持 `.zip` 格式（不支持 7z / rar 等格式）
+- 右键菜单注册到当前用户注册表 `HKCU`，不会影响系统中的其他用户
+- 右键菜单默认调用当前 Python 环境中的 `pythonw.exe`；若不存在则回退到 `python.exe`
+- 如果资源管理器没有立即显示右键菜单，刷新文件夹或重新打开资源管理器窗口即可
+- `xkw-watermark-cleaner.log` 为追加写入，不会在每次运行时覆盖旧记录
+- 右键菜单走 Python 源码即时生效，修改源码后无需重新打包 exe；exe 内的选项状态不影响右键菜单行为

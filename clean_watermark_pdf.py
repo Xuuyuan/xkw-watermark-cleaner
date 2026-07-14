@@ -1,6 +1,9 @@
 import os
 import re
+import atexit
 import tempfile
+import multiprocessing as mp
+import queue as _queue
 
 import fitz
 
@@ -108,7 +111,11 @@ def clear_xmp_metadata(doc):
         pass
 
 
-def deep_clean_pdf_metadata(source_path, target_path, config):
+def _deep_clean_core(source_path, target_path, config):
+    """真正执行底层元数据深度清理（在子进程中运行，可被超时强杀）。
+
+    失败时直接抛异常，由调用方决定降级策略；自身不负责回退。
+    """
     output_dir = os.path.dirname(os.path.abspath(target_path)) or os.getcwd()
     temp_fd, temp_target = tempfile.mkstemp(suffix=".pdf", dir=output_dir)
     os.close(temp_fd)
@@ -136,15 +143,156 @@ def deep_clean_pdf_metadata(source_path, target_path, config):
                     continue
 
                 if contains_keyword(value, config["metadata_keywords"]):
-                    deep_doc.xref_set_key(xref, key, "null")
-                    print(f"已定位并清除底层元数据 xref={xref} key={key}: {value}")
+                    try:
+                        deep_doc.xref_set_key(xref, key, "null")
+                        print(f"已定位并清除底层元数据 xref={xref} key={key}: {value}")
+                    except ValueError as set_err:
+                        # 个别对象（如含非法字符键名的脏键、位于压缩对象流中的对象）
+                        # 不支持直接修改，跳过该键以保证整个文件处理不中断。
+                        print(f"跳过无法修改的底层元数据 xref={xref} key={key}: {set_err}")
 
-        deep_doc.save(temp_target, garbage=4, deflate=True, clean=True)
+        # 注意：之前用 garbage=4 + clean=True，对损坏/增量更新的 PDF 会卡死，
+        # 或把页面对象误清导致 "cannot save with zero pages"。改为更温和的 garbage=1，
+        # 不再强制重建结构，避免这两种故障。
+        deep_doc.save(temp_target, garbage=1, deflate=True)
         deep_doc.close()
         os.replace(temp_target, target_path)
     finally:
         if os.path.exists(temp_target):
-            os.remove(temp_target)
+            try:
+                os.remove(temp_target)
+            except OSError:
+                pass
+
+
+def _fallback_to_source(source_path, target_path):
+    """deep clean 失败/超时时，用已清页眉的版本（source_path）作为最终结果，
+    保证文件至少完成了页眉/正文水印清理，且不会被损坏。
+    """
+    if os.path.exists(source_path):
+        try:
+            os.replace(source_path, target_path)
+        except OSError:
+            pass
+
+
+def _deep_clean_worker_loop(job_q, result_q):
+    """子进程入口：循环接收 deep clean 任务并执行。"""
+    while True:
+        item = job_q.get()
+        if item is None:
+            break
+        source_path, target_path, config = item
+        try:
+            _deep_clean_core(source_path, target_path, config)
+            result_q.put(("ok", None))
+        except Exception as exc:
+            result_q.put(("err", f"{type(exc).__name__}: {exc}"))
+
+
+class _DeepCleanPool:
+    """持久子进程池（大小为 1）：正常文件零额外开销；遇到挂死文件可在超时后
+    强杀子进程并重建，从而保护整个批处理不被单个坏文件拖垮。
+    """
+
+    def __init__(self, timeout=90):
+        self.timeout = timeout
+        self._start()
+
+    def _start(self):
+        ctx = mp.get_context("spawn")
+        self.job_q = ctx.Queue()
+        self.result_q = ctx.Queue()
+        self.proc = ctx.Process(
+            target=_deep_clean_worker_loop,
+            args=(self.job_q, self.result_q),
+            daemon=True,
+        )
+        self.proc.start()
+
+    def run(self, source_path, target_path, config):
+        self.job_q.put((source_path, target_path, config))
+        try:
+            status, err = self.result_q.get(timeout=self.timeout)
+        except _queue.Empty:
+            # 超时：子进程极可能卡死，强制杀掉并重建，后续文件不受影响。
+            try:
+                self.proc.kill()
+            except Exception:
+                pass
+            self.proc.join()
+            self._start()
+            return ("timeout", None)
+        return (status, err)
+
+    def close(self):
+        try:
+            self.job_q.put(None)
+        except Exception:
+            pass
+        try:
+            self.proc.kill()
+        except Exception:
+            pass
+        try:
+            self.proc.join(timeout=5)
+        except Exception:
+            pass
+
+
+_deep_pool = None
+_pool_disabled = False
+
+
+def _get_pool():
+    global _deep_pool, _pool_disabled
+    if _pool_disabled:
+        return None
+    if _deep_pool is None:
+        try:
+            _deep_pool = _DeepCleanPool(timeout=90)
+        except Exception:
+            _pool_disabled = True
+            return None
+    return _deep_pool
+
+
+@atexit.register
+def _close_deep_pool():
+    global _deep_pool
+    if _deep_pool is not None:
+        try:
+            _deep_pool.close()
+        except Exception:
+            pass
+        _deep_pool = None
+
+
+def deep_clean_pdf_metadata(source_path, target_path, config):
+    """带超时保护的底层元数据深度清理入口。
+
+    - 正常：子进程完成清理并写回 target_path。
+    - 超时/异常：降级为「仅保留页眉清理结果」（用 source_path 覆盖 target_path），
+      并在日志中提示，绝不让单个坏文件卡住整个批处理。
+    """
+    pool = _get_pool()
+    if pool is None:
+        # 子进程池不可用时的降级路径（无超时保护，但至少失败时回退不损坏文件）。
+        try:
+            _deep_clean_core(source_path, target_path, config)
+        except Exception as exc:
+            print(f"⚠ 底层元数据深度清理失败: {exc}，保留页眉清理结果")
+            _fallback_to_source(source_path, target_path)
+        return
+
+    status, err = pool.run(source_path, target_path, config)
+    if status == "ok":
+        return
+    if status == "timeout":
+        print(f"⚠ 底层元数据深度清理超时({pool.timeout}s)，跳过该文件元数据清理（保留页眉清理结果）: {target_path}")
+    else:
+        print(f"⚠ 底层元数据深度清理失败: {err}，保留页眉清理结果: {target_path}")
+    _fallback_to_source(source_path, target_path)
 
 
 def clean_pdf(input_path, output_path=None, remove_all_header=None):
@@ -169,12 +317,15 @@ def clean_pdf(input_path, output_path=None, remove_all_header=None):
     os.close(temp_fd)
 
     try:
-        doc.save(temp_output, garbage=4, deflate=True, clean=True)
+        doc.save(temp_output, garbage=1, deflate=True, clean=True)
         doc.close()
         deep_clean_pdf_metadata(temp_output, output_path, config)
     finally:
         if os.path.exists(temp_output):
-            os.remove(temp_output)
+            try:
+                os.remove(temp_output)
+            except OSError:
+                pass
 
     return output_path
 
