@@ -10,6 +10,8 @@ import os
 import shutil
 import subprocess
 import sys
+import contextlib
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -26,11 +28,20 @@ from PySide6.QtWidgets import (
 
 # 确保项目根目录在 sys.path 中
 PROJECT_DIR = Path(__file__).resolve().parent
+
+
+def _resource_path(rel: str) -> str:
+    """解析资源路径：打包后优先用 PyInstaller 的 _MEIPASS，否则用源码目录。"""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return os.path.join(base, rel)
+    return str(PROJECT_DIR / rel)
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from clean_watermark import clean_one_file, clean_one_file_overwrite, collect_files
 from cleaner_config import load_config, DEFAULT_METADATA_KEYWORDS
+from context_menu_handler import _strip_marker, MARKER_FIELD
 
 # ─── 常量 ─────────────────────────────────────────────
 ARCHIVE_EXTENSIONS = {".zip"}
@@ -51,6 +62,40 @@ BORDER = "#E8E8E8"
 SUCCESS_COLOR = "#52C41A"
 WARNING_COLOR = "#FAAD14"
 ERROR_COLOR = "#FF4D4F"
+
+
+def _fmt_size(num_bytes):
+    """把字节数格式化为易读字符串（B / KB / MB）。"""
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    if num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.1f} KB"
+    return f"{num_bytes / 1024 / 1024:.2f} MB"
+
+
+class _GuiLogWriter(io.TextIOBase):
+    """把 clean_* 函数内部的 print 实时转发到 GUI 日志面板。
+
+    这些 print 在 GUI 模式下原本会进入 stdout 被丢弃；这里把它们按行缓冲，
+    作为「子步骤」缩进显示在日志面板里，让用户看清每个文件到底清了什么。
+    """
+
+    def __init__(self, emit):
+        self._emit = emit
+        self._buf = ""
+
+    def write(self, text):
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line.strip():
+                self._emit("    " + line.rstrip(), TEXT_SECONDARY)
+        return len(text)
+
+    def flush(self):
+        if self._buf.strip():
+            self._emit("    " + self._buf.rstrip(), TEXT_SECONDARY)
+        self._buf = ""
 
 
 # ─── 全局样式 ─────────────────────────────────────────
@@ -273,18 +318,25 @@ class ProcessWorker(QThread):
     file_status_signal = Signal(str, str, str)  # path, status, color
     done_signal = Signal(int, int)           # success, fail
 
-    def __init__(self, docs, archives, overwrite, remove_headers):
+    def __init__(self, docs, archives, overwrite, remove_headers, flatten=True,
+                 folder_roots=None, strip_marker=True):
         super().__init__()
         self.docs = docs
         self.archives = archives
         self.overwrite = overwrite
         self.remove_headers = remove_headers
+        self.flatten = flatten
+        self.folder_roots = folder_roots or []
+        self.strip_marker = strip_marker
 
     def run(self):
+        # 把 clean_* 内部的 print 实时转发到 GUI 日志面板（作为子步骤显示）
+        self._log_writer = _GuiLogWriter(self.log_signal.emit)
         success = 0
         fail = 0
         total = len(self.docs) + len(self.archives)
         current = 0
+        t_total_start = time.time()
 
         # 处理普通文档
         for doc_path in self.docs:
@@ -294,16 +346,34 @@ class ProcessWorker(QThread):
             self.log_signal.emit(f"[{datetime.now():%H:%M:%S}] 开始处理: {doc_path}", TEXT_SECONDARY)
 
             try:
-                if self.overwrite:
-                    output = clean_one_file_overwrite(str(doc_path),
-                                                       remove_all_header=self.remove_headers)
-                else:
-                    output = clean_one_file(str(doc_path),
-                                            remove_all_header=self.remove_headers)
-                self.log_signal.emit(f"[{datetime.now():%H:%M:%S}] 处理完成: {output}", SUCCESS_COLOR)
+                size_in = os.path.getsize(doc_path) if os.path.exists(doc_path) else 0
+                t0 = time.time()
+                with contextlib.redirect_stdout(self._log_writer):
+                    if self.overwrite:
+                        output = clean_one_file_overwrite(str(doc_path),
+                                                           remove_all_header=self.remove_headers)
+                    else:
+                        output = clean_one_file(str(doc_path),
+                                                remove_all_header=self.remove_headers)
+                self._log_writer.flush()
+                elapsed = time.time() - t0
+                size_out = os.path.getsize(output) if output and os.path.exists(output) else 0
+                self.log_signal.emit(
+                    f"[{datetime.now():%H:%M:%S}] 处理完成: {output}  "
+                    f"[输入 {_fmt_size(size_in)} → 输出 {_fmt_size(size_out)}，耗时 {elapsed:.2f}s]",
+                    SUCCESS_COLOR)
                 self.file_status_signal.emit(str(doc_path), "已完成", SUCCESS_COLOR)
+                # 文件名含 MARKER_FIELD：去掉该字段并重命名（不删文件）
+                had_marker = (MARKER_FIELD in Path(doc_path).name) or (MARKER_FIELD in Path(output).name)
+                if self.strip_marker:
+                    _strip_marker(output)
+                    if Path(doc_path).exists() and Path(doc_path).absolute() != Path(output).absolute():
+                        _strip_marker(doc_path)
+                if had_marker and self.strip_marker:
+                    self.file_status_signal.emit(str(doc_path), "已重命名", WARNING_COLOR)
                 success += 1
             except Exception as exc:
+                self._log_writer.flush()
                 self.log_signal.emit(
                     f"[{datetime.now():%H:%M:%S}] 处理失败: {doc_path}\n原因: {exc}", ERROR_COLOR)
                 self.file_status_signal.emit(str(doc_path), "失败", ERROR_COLOR)
@@ -318,8 +388,29 @@ class ProcessWorker(QThread):
                                  TEXT_SECONDARY)
 
             try:
-                self._process_single_archive(archive_path)
+                self._process_single_archive(archive_path, flatten=self.flatten,
+                                             strip_marker=self.strip_marker)
                 self.file_status_signal.emit(str(archive_path), "已完成", SUCCESS_COLOR)
+                # 覆盖模式：删除原始压缩包；文件名含『精品解析：』字段（非覆盖）：重命名去掉字段
+                if self.overwrite:
+                    if Path(archive_path).exists():
+                        try:
+                            Path(archive_path).unlink()
+                            self.log_signal.emit(
+                                f"[{datetime.now():%H:%M:%S}] 已删除原始压缩包: {Path(archive_path).name}",
+                                WARNING_COLOR)
+                            self.file_status_signal.emit(str(archive_path), "已删除", WARNING_COLOR)
+                        except Exception as exc:
+                            self.log_signal.emit(
+                                f"[{datetime.now():%H:%M:%S}] 删除原始压缩包失败: {Path(archive_path).name} ({exc})",
+                                ERROR_COLOR)
+                elif self.strip_marker and MARKER_FIELD in Path(archive_path).name:
+                    renamed = _strip_marker(archive_path)
+                    if Path(renamed).name != Path(archive_path).name:
+                        self.log_signal.emit(
+                            f"[{datetime.now():%H:%M:%S}] 文件名含『{MARKER_FIELD}』，已重命名为: {Path(renamed).name}",
+                            WARNING_COLOR)
+                        self.file_status_signal.emit(str(archive_path), "已重命名", WARNING_COLOR)
                 success += 1
             except Exception as exc:
                 self.log_signal.emit(
@@ -328,16 +419,30 @@ class ProcessWorker(QThread):
                 self.file_status_signal.emit(str(archive_path), "失败", ERROR_COLOR)
                 fail += 1
 
+        total_elapsed = time.time() - t_total_start
+        # 平铺模式：把用户添加的文件夹内的子文件夹内容整体上移到顶层文件夹
+        if self.flatten and self.folder_roots:
+            from context_menu_handler import flatten_subfolders
+            for root in self.folder_roots:
+                try:
+                    flatten_subfolders(Path(root))
+                except Exception as exc:
+                    self.log_signal.emit(
+                        f"[{datetime.now():%H:%M:%S}] 平铺子文件夹失败: {root} ({exc})", ERROR_COLOR)
         self.log_signal.emit(
-            f"\n全部处理完成！成功 {success}，失败 {fail}",
+            f"\n全部处理完成！成功 {success}，失败 {fail}，总耗时 {total_elapsed:.1f}s",
             SUCCESS_COLOR if fail == 0 else WARNING_COLOR)
         self.done_signal.emit(success, fail)
 
-    def _process_single_archive(self, archive_path: Path):
-        from context_menu_handler import extract_archive, find_archives_in_dir
+    def _process_single_archive(self, archive_path: Path, flatten=False, strip_marker=True):
+        from context_menu_handler import (extract_archive, find_archives_in_dir,
+                                          _strip_marker, _strip_marker_in_tree, MARKER_FIELD)
 
-        archive_path = archive_path.resolve()
-        extract_root = archive_path.parent / archive_path.stem
+        archive_path = Path(archive_path).absolute()
+        parent = archive_path.parent
+        stem = archive_path.stem
+        # 平铺模式：先解压到临时子文件夹，清理完再整体平铺到 parent（压缩包所在文件夹）
+        extract_root = (parent / f"_xkw_extract_{stem}") if flatten else (parent / stem)
 
         # 解压
         extract_archive(archive_path, extract_root)
@@ -377,12 +482,60 @@ class ProcessWorker(QThread):
                              TEXT_SECONDARY)
 
         for fp in files:
+            size_in = os.path.getsize(fp) if os.path.exists(fp) else 0
+            t0 = time.time()
             try:
-                clean_one_file_overwrite(str(fp), remove_all_header=self.remove_headers)
-                self.log_signal.emit(f"[{datetime.now():%H:%M:%S}] 处理完成: {fp}", SUCCESS_COLOR)
+                with contextlib.redirect_stdout(self._log_writer):
+                    clean_one_file_overwrite(str(fp), remove_all_header=self.remove_headers)
+                self._log_writer.flush()
+                elapsed = time.time() - t0
+                self.log_signal.emit(
+                    f"[{datetime.now():%H:%M:%S}] 处理完成: {fp}  "
+                    f"[输入 {_fmt_size(size_in)}，耗时 {elapsed:.2f}s]",
+                    SUCCESS_COLOR)
             except Exception as exc:
+                self._log_writer.flush()
                 self.log_signal.emit(f"[{datetime.now():%H:%M:%S}] 处理失败: {fp} ({exc})",
                                      ERROR_COLOR)
+
+        # 若开启去字段，且解压根目录名带『精品解析：』，先把根目录名也去掉，
+        # 避免解压出的文件夹仍叫「精品解析：x」而原压缩包已改名「x.zip」的不一致。
+        if strip_marker and MARKER_FIELD in extract_root.name:
+            extract_root = _strip_marker(extract_root)
+
+        # 递归去除解压目录树内所有文件/文件夹名里的『精品解析：』字段（兜底）
+        if strip_marker:
+            _strip_marker_in_tree(extract_root)
+            self.log_signal.emit(
+                f"[{datetime.now():%H:%M:%S}] 已清理目录树中的『精品解析：』字段: {extract_root.name}",
+                TEXT_SECONDARY)
+
+        # 平铺模式：清理后把内容整体移动到压缩包所在文件夹
+        if flatten:
+            for item in list(extract_root.iterdir()):
+                target = parent / item.name
+                try:
+                    if target.exists():
+                        # 同名文件已存在（通常为文件夹内原有零散文件）：改名并入，避免覆盖已处理内容
+                        renamed = parent / f"{stem}__{item.name}"
+                        shutil.move(str(item), str(renamed))
+                        item_type = "文件夹" if renamed.is_dir() else "文件"
+                        self.log_signal.emit(
+                            f"[{datetime.now():%H:%M:%S}] 已平铺(改名防冲突): {item.name} -> {renamed.name} ({item_type})")
+                    else:
+                        shutil.move(str(item), str(target))
+                        item_type = "文件夹" if target.is_dir() else "文件"
+                        self.log_signal.emit(
+                            f"[{datetime.now():%H:%M:%S}] 已平铺到文件夹: {item.name} ({item_type})")
+                except Exception as exc:
+                    self.log_signal.emit(
+                        f"[{datetime.now():%H:%M:%S}] 平铺失败: {item.name} ({exc})", ERROR_COLOR)
+            try:
+                extract_root.rmdir()
+                self.log_signal.emit(
+                    f"[{datetime.now():%H:%M:%S}] 已删除临时解压目录: {extract_root.name}")
+            except Exception:
+                pass
 
         self.log_signal.emit(f"[{datetime.now():%H:%M:%S}] 压缩包处理完成: {archive_path.name}",
                              SUCCESS_COLOR)
@@ -399,6 +552,7 @@ class MainWindow(QMainWindow):
         # 数据
         self.config = load_config()
         self.file_paths = {}          # {tree_key: Path}
+        self.added_folders = set()    # 用户「选择文件夹」添加的顶层文件夹（用于平铺子文件夹）
         self.is_processing = False
         self._row_counter = 0
 
@@ -549,12 +703,56 @@ class MainWindow(QMainWindow):
         self.overwrite_cb.setChecked(True)
         self.remove_headers_cb = QCheckBox("删除页眉全部内容")
         self.remove_headers_cb.setChecked(True)
-        for cb in [self.overwrite_cb, self.remove_headers_cb]:
+        self.strip_marker_cb = QCheckBox("删除文件名中的『精品解析：』字段")
+        self.strip_marker_cb.setChecked(True)
+        self.flatten_cb = QCheckBox("平铺到文件夹（压缩包与子文件夹都展开到当前文件夹）")
+        self.flatten_cb.setChecked(True)
+        for cb in [self.overwrite_cb, self.remove_headers_cb, self.strip_marker_cb, self.flatten_cb]:
             cb.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px;")
         opts_layout.addWidget(self.overwrite_cb)
         opts_layout.addWidget(self.remove_headers_cb)
+        opts_layout.addWidget(self.strip_marker_cb)
+        opts_layout.addWidget(self.flatten_cb)
         opts_layout.addStretch()
         layout.addWidget(opts)
+
+        # 主内容区：左 = 处理日志（独立面板），右 = 文件列表 + 操作
+        content_split = QSplitter(Qt.Horizontal)
+        content_split.setHandleWidth(1)
+        content_split.setStyleSheet(f"QSplitter::handle {{ background-color: {BORDER}; }}")
+
+        # ── 左：处理日志面板（独立的「候选框」）──
+        log_panel = QWidget()
+        log_panel.setStyleSheet("background: transparent;")
+        log_panel_layout = QVBoxLayout(log_panel)
+        log_panel_layout.setContentsMargins(0, 0, 8, 0)
+        log_panel_layout.setSpacing(6)
+
+        log_header = QWidget()
+        log_header.setStyleSheet("background: transparent;")
+        log_header_layout = QHBoxLayout(log_header)
+        log_header_layout.setContentsMargins(0, 4, 0, 2)
+        log_title = QLabel("处理日志")
+        log_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {TEXT_PRIMARY};")
+        btn_clear_log = QPushButton("清空日志")
+        btn_clear_log.setStyleSheet(LINK_BTN)
+        btn_clear_log.setCursor(Qt.PointingHandCursor)
+        btn_clear_log.clicked.connect(self._clear_log)
+        log_header_layout.addWidget(log_title)
+        log_header_layout.addStretch()
+        log_header_layout.addWidget(btn_clear_log)
+        log_panel_layout.addWidget(log_header)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        log_panel_layout.addWidget(self.log_text, stretch=1)
+
+        # ── 右：文件列表面板 ──
+        file_panel = QWidget()
+        file_panel.setStyleSheet("background: transparent;")
+        file_panel_layout = QVBoxLayout(file_panel)
+        file_panel_layout.setContentsMargins(8, 0, 0, 0)
+        file_panel_layout.setSpacing(6)
 
         # 文件列表标题
         list_header = QWidget()
@@ -563,14 +761,26 @@ class MainWindow(QMainWindow):
         list_header_layout.setContentsMargins(0, 4, 0, 2)
         self.file_count_label = QLabel("文件列表（共 0 个）")
         self.file_count_label.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {TEXT_PRIMARY};")
+
+        btn_select_all = QPushButton("全选")
+        btn_invert = QPushButton("反选")
+        btn_remove = QPushButton("删除选中")
         btn_clear = QPushButton("清空列表")
-        btn_clear.setStyleSheet(LINK_BTN)
-        btn_clear.setCursor(Qt.PointingHandCursor)
+        for btn in (btn_select_all, btn_invert, btn_remove, btn_clear):
+            btn.setStyleSheet(LINK_BTN)
+            btn.setCursor(Qt.PointingHandCursor)
+        btn_select_all.clicked.connect(self._select_all)
+        btn_invert.clicked.connect(self._invert_selection)
+        btn_remove.clicked.connect(self._remove_selected)
         btn_clear.clicked.connect(self._clear_files)
+
         list_header_layout.addWidget(self.file_count_label)
         list_header_layout.addStretch()
+        list_header_layout.addWidget(btn_select_all)
+        list_header_layout.addWidget(btn_invert)
+        list_header_layout.addWidget(btn_remove)
         list_header_layout.addWidget(btn_clear)
-        layout.addWidget(list_header)
+        file_panel_layout.addWidget(list_header)
 
         # 文件 Tree
         self.file_tree = QTreeWidget()
@@ -579,13 +789,15 @@ class MainWindow(QMainWindow):
         self.file_tree.setColumnWidth(1, 320)
         self.file_tree.setColumnWidth(2, 60)
         self.file_tree.setColumnWidth(3, 80)
+        self.file_tree.setMinimumHeight(220)
+        self.file_tree.setMaximumHeight(400)
         self.file_tree.setAlternatingRowColors(True)
         self.file_tree.setRootIsDecorated(False)
         self.file_tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         self.file_tree.itemDoubleClicked.connect(self._toggle_check)
         # Delete 键删除
         self.file_tree.keyPressEvent = self._tree_key_press
-        layout.addWidget(self.file_tree, stretch=1)
+        file_panel_layout.addWidget(self.file_tree, stretch=1)
 
         # 操作按钮 + 进度条
         action_row = QWidget()
@@ -618,29 +830,15 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.progress_label)
 
         action_layout.addStretch()
-        layout.addWidget(action_row)
+        file_panel_layout.addWidget(action_row)
 
-        # 日志区标题
-        log_header = QWidget()
-        log_header.setStyleSheet("background: transparent;")
-        log_header_layout = QHBoxLayout(log_header)
-        log_header_layout.setContentsMargins(0, 4, 0, 2)
-        log_title = QLabel("处理日志")
-        log_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {TEXT_PRIMARY};")
-        btn_clear_log = QPushButton("清空日志")
-        btn_clear_log.setStyleSheet(LINK_BTN)
-        btn_clear_log.setCursor(Qt.PointingHandCursor)
-        btn_clear_log.clicked.connect(self._clear_log)
-        log_header_layout.addWidget(log_title)
-        log_header_layout.addStretch()
-        log_header_layout.addWidget(btn_clear_log)
-        layout.addWidget(log_header)
-
-        # 日志 Text
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(160)
-        layout.addWidget(self.log_text)
+        # 左侧=文件列表（占满并可伸缩），右侧=处理日志（固定初始宽）
+        content_split.addWidget(file_panel)
+        content_split.addWidget(log_panel)
+        content_split.setStretchFactor(0, 1)
+        content_split.setStretchFactor(1, 0)
+        content_split.setSizes([600, 320])
+        layout.addWidget(content_split, stretch=1)
 
         return page
 
@@ -820,6 +1018,7 @@ class MainWindow(QMainWindow):
             if not p.exists():
                 continue
             if p.is_dir():
+                self.added_folders.add(str(p))
                 files = collect_files([p], recursive=True)
                 for fp in files:
                     if str(fp) not in self.file_paths:
@@ -841,23 +1040,32 @@ class MainWindow(QMainWindow):
         self._row_counter += 1
 
         item = QTreeWidgetItem()
-        item.setText(0, "☐")
+        # 列 0 使用原生复选框，不再用 "☐/☑" 文本模拟
+        item.setCheckState(0, Qt.Checked)
         item.setText(1, str(path))
         item.setText(2, type_str)
         item.setText(3, "待处理")
         item.setData(0, Qt.UserRole, str(path))
-        item.setCheckState(0, Qt.Unchecked)
         self.file_tree.addTopLevelItem(item)
         self.file_paths[key] = path
 
     def _update_file_count(self):
         self.file_count_label.setText(f"文件列表（共 {self.file_tree.topLevelItemCount()} 个）")
 
+    def _select_all(self):
+        for i in range(self.file_tree.topLevelItemCount()):
+            self.file_tree.topLevelItem(i).setCheckState(0, Qt.Checked)
+
+    def _invert_selection(self):
+        for i in range(self.file_tree.topLevelItemCount()):
+            item = self.file_tree.topLevelItem(i)
+            item.setCheckState(0, Qt.Unchecked if item.checkState(0) == Qt.Checked else Qt.Checked)
+
     def _toggle_check(self, item, col):
         """双击切换复选框。"""
         if col == 0:
-            current = item.text(0)
-            item.setText(0, "☑" if current == "☐" else "☐")
+            state = item.checkState(0)
+            item.setCheckState(0, Qt.Unchecked if state == Qt.Checked else Qt.Checked)
 
     def _tree_key_press(self, event):
         if event.key() == Qt.Key_Delete:
@@ -886,7 +1094,8 @@ class MainWindow(QMainWindow):
         checked_archives = []
         for i in range(self.file_tree.topLevelItemCount()):
             item = self.file_tree.topLevelItem(i)
-            if item.text(0) != "☑":
+            # 以原生复选框状态为准
+            if item.checkState(0) != Qt.Checked:
                 continue
             path = Path(item.data(0, Qt.UserRole) or item.text(1))
             if not path.exists():
@@ -910,10 +1119,14 @@ class MainWindow(QMainWindow):
 
         overwrite = self.overwrite_cb.isChecked()
         remove_headers = self.remove_headers_cb.isChecked()
+        flatten = self.flatten_cb.isChecked()
+        strip_marker = self.strip_marker_cb.isChecked()
 
         self._set_status(f"正在处理...（共 {len(checked_docs) + len(checked_archives)} 项）")
 
-        self.worker = ProcessWorker(checked_docs, checked_archives, overwrite, remove_headers)
+        folder_roots = [Path(f) for f in self.added_folders]
+        self.worker = ProcessWorker(checked_docs, checked_archives, overwrite, remove_headers,
+                                    flatten, folder_roots, strip_marker)
         self.worker.log_signal.connect(self._log)
         self.worker.progress_signal.connect(self._on_progress)
         self.worker.file_status_signal.connect(self._on_file_status)
@@ -994,10 +1207,26 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(GLOBAL_STYLE)
+    # 运行时窗口图标：exe 文件图标已在 spec 中指定，这里让 GUI 窗口标题栏也显示
+    _icon_path = _resource_path("xkw.ico")
+    if os.path.exists(_icon_path):
+        app.setWindowIcon(QIcon(_icon_path))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
+    # 冻结版（PyInstaller onedir）在 Windows 上以 spawn 方式启动子进程，
+    # 必须最先调用 freeze_support()，否则子进程会重新执行本入口而陷入递归 / 挂死，
+    # 表现为「文件夹里只处理了少量文件就卡住 / 崩溃」（stable_process 的监督子进程依赖它）。
+    import multiprocessing
+    multiprocessing.freeze_support()
+
+    # 命令行模式：被右键菜单 / 资源管理器以文件路径参数调用时，
+    # 直接走 context_menu_handler 的水印清理逻辑（不显示 GUI），
+    # 这样独立版 exe 自带 Python 运行时，无需本机安装 Python 即可处理文件。
+    if len(sys.argv) > 1:
+        import context_menu_handler
+        raise SystemExit(context_menu_handler.main())
     main()
