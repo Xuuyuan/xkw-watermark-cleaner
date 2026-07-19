@@ -224,13 +224,13 @@ pip install pyinstaller PySide6
 ### 构建命令
 
 ```bash
-# 构建全部（完整版 + 精简版）
+# 构建全部（完整版 + 启动器版）
 python build.py
 
 # 仅构建完整版
 python build.py full
 
-# 仅构建精简版
+# 仅构建启动器版
 python build.py simplified
 ```
 
@@ -239,18 +239,17 @@ python build.py simplified
 | 版本 | 路径 | 说明 |
 |------|------|------|
 | 完整版 | `body/xkw_standalone.exe` | PySide6 图形界面，扁平 onedir（exe 与 dll 直接同目录，不生成 `_internal` 子文件夹） |
-| 精简版 | `body_simplified/xkw_simplified.exe` | tkinter 图形界面，onefile 单文件 |
+| 启动器版 | `body_simplified/xkw_simplified.exe` | tkinter 图形界面，onefile 单文件 |
 
-> 不再生成 `body_standalone.7z` 分发包，分发时直接复制整个 `body/` 文件夹即可。
 
 ### 两个版本的区别
 
 - **完整版**：使用 PySide6（Qt6）界面，功能最完整（含图形化文件列表、处理日志面板、各选项开关），启动需加载多个 DLL，首次启动稍慢。
-- **精简版**：使用 tkinter 界面，单 exe 文件，体积小、启动快，适合快速使用。
+- **启动器版**：使用 tkinter 界面，单 exe 文件，体积小、启动快，适合快速使用。
 
 ## 图形界面（GUI）
 
-完整版 `body/xkw_standalone.exe` 与精简版 `body_simplified/xkw_simplified.exe` 均为图形界面，双击即可运行（无需命令行参数）。其中完整版（PySide6）界面布局为：
+完整版 `body/xkw_standalone.exe` 与启动器版 `body_simplified/xkw_simplified.exe` 均为图形界面，双击即可运行（无需命令行参数）。其中完整版（PySide6）界面布局为：
 
 - **左侧：文件列表** —— 添加文件 / 文件夹后列出待处理项，支持勾选、全选、反选、删除选中、清空列表。
 - **右侧：处理日志** —— 实时显示每个文件的处理状态与提示，可清空。
