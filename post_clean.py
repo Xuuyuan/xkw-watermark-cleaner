@@ -3,7 +3,11 @@
 import shutil
 from pathlib import Path
 
-BODY = Path(__file__).resolve().parent / "body" / "_internal"
+BODY_ROOT = Path(__file__).resolve().parent / "body"
+# PyInstaller 6.x 默认把依赖放进 body/_internal；若 spec 里设了 contents_directory='.'
+# 则为扁平布局（dll 直接散在 body/ 根，无 _internal 子目录）。两种情况都兼容：
+# 优先使用 _internal，不存在则回退到 body 根目录。
+BODY = BODY_ROOT / "_internal" if (BODY_ROOT / "_internal").exists() else BODY_ROOT
 
 # Files to delete (both in _internal/ and _internal/PySide6/)
 DELETE_FILES = [
