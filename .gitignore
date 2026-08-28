@@ -1,20 +1,11 @@
-# 构建产物（PyInstaller 输出，不进版本库）
-body/
-body_simplified/
-dist/
-*.7z
-
-# Python 缓存
 __pycache__/
-*.py[cod]
 *.pyc
 *.pyo
 *.pyd
+
 # Generated outputs
 *(cleaned).docx
 *(cleaned).pdf
-
-# 本地日志
 xkw-watermark-cleaner.log
 
 # Local test fixtures
@@ -25,3 +16,6 @@ xkw-watermark-cleaner.log
 # OS / editor
 .DS_Store
 Thumbs.db
+
+
+body_standalone.7z

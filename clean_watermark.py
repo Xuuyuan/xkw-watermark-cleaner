@@ -73,7 +73,7 @@ def clean_one_file(path, output_dir=None, remove_all_header=None):
     if suffix == ".docx":
         return clean_docx(str(path), output_path, remove_all_header=remove_all_header)
     if suffix == ".pdf":
-        return clean_pdf(str(path), output_path, remove_all_header=remove_all_header)
+        return clean_pdf(str(path), output_path)
 
     raise ValueError(f"不支持的文件类型: {path}")
 
@@ -127,7 +127,7 @@ def clean_one_file_overwrite(path, remove_all_header=None):
         temp_fd, temp_output = tempfile.mkstemp(suffix=".pdf", dir=output_dir)
         os.close(temp_fd)
         try:
-            clean_pdf(str(path), temp_output, remove_all_header=remove_all_header)
+            clean_pdf(str(path), temp_output)
             return _safe_overwrite(temp_output, path)
         finally:
             if os.path.exists(temp_output):

@@ -1,5 +1,4 @@
 import os
-import re
 import atexit
 import tempfile
 import multiprocessing as mp
@@ -11,7 +10,6 @@ from cleaner_config import load_config
 
 
 DEFAULT_KEYWORDS = ["学科网", "zxxk.com", "rbm.xkw.com", "xkw"]
-ID_PATTERN = re.compile(r"\{#\{[A-Za-z0-9+/=]+\}#\}")
 
 
 def build_output_path(input_path):
@@ -24,36 +22,6 @@ def contains_keyword(value, keywords):
         return False
     lower_value = str(value).lower()
     return any(keyword.lower() in lower_value for keyword in keywords)
-
-
-def clean_page_content(doc, keywords, remove_all_header=False):
-    print("正在扫描并清理动态标记...")
-    for page_index, page in enumerate(doc, start=1):
-        words = page.get_text("words")
-        height = page.rect.height
-
-        for word in words:
-            text_content = word[4]
-            if ID_PATTERN.search(text_content):
-                rect = fitz.Rect(word[:4])
-                page.add_redact_annot(rect, fill=(1, 1, 1))
-                print(f"已定位并清除第 {page_index} 页动态 ID: {text_content}")
-
-        if remove_all_header:
-            header_limit = height * 0.1
-            for word in words:
-                if word[1] < header_limit:
-                    rect = fitz.Rect(word[:4])
-                    page.add_redact_annot(rect, fill=(1, 1, 1))
-            print(f"已清除第 {page_index} 页页眉区域全部内容")
-
-        for keyword in keywords:
-            for inst in page.search_for(keyword):
-                if inst.y1 > height * 0.9 or inst.y0 < height * 0.1:
-                    page.add_redact_annot(inst, fill=(1, 1, 1))
-                    print(f"已定位并清除第 {page_index} 页页边关键词: {keyword}")
-
-        page.apply_redactions()
 
 
 def clean_standard_metadata(doc, config):
@@ -166,8 +134,8 @@ def _deep_clean_core(source_path, target_path, config):
 
 
 def _fallback_to_source(source_path, target_path):
-    """deep clean 失败/超时时，用已清页眉的版本（source_path）作为最终结果，
-    保证文件至少完成了页眉/正文水印清理，且不会被损坏。
+    """deep clean 失败/超时时，用已清理的版本（source_path）作为最终结果，
+    保证文件至少完成了元数据清理，且不会被损坏。
     """
     if os.path.exists(source_path):
         try:
@@ -272,7 +240,7 @@ def deep_clean_pdf_metadata(source_path, target_path, config):
     """带超时保护的底层元数据深度清理入口。
 
     - 正常：子进程完成清理并写回 target_path。
-    - 超时/异常：降级为「仅保留页眉清理结果」（用 source_path 覆盖 target_path），
+    - 超时/异常：降级为「仅保留已清理版本」（用 source_path 覆盖 target_path），
       并在日志中提示，绝不让单个坏文件卡住整个批处理。
     """
     pool = _get_pool()
@@ -281,7 +249,7 @@ def deep_clean_pdf_metadata(source_path, target_path, config):
         try:
             _deep_clean_core(source_path, target_path, config)
         except Exception as exc:
-            print(f"⚠ 底层元数据深度清理失败: {exc}，保留页眉清理结果")
+            print(f"⚠ 底层元数据深度清理失败: {exc}，保留已清理版本")
             _fallback_to_source(source_path, target_path)
         return
 
@@ -289,13 +257,13 @@ def deep_clean_pdf_metadata(source_path, target_path, config):
     if status == "ok":
         return
     if status == "timeout":
-        print(f"⚠ 底层元数据深度清理超时({pool.timeout}s)，跳过该文件元数据清理（保留页眉清理结果）: {target_path}")
+        print(f"⚠ 底层元数据深度清理超时({pool.timeout}s)，跳过该文件元数据清理（保留已清理版本）: {target_path}")
     else:
-        print(f"⚠ 底层元数据深度清理失败: {err}，保留页眉清理结果: {target_path}")
+        print(f"⚠ 底层元数据深度清理失败: {err}，保留已清理版本: {target_path}")
     _fallback_to_source(source_path, target_path)
 
 
-def clean_pdf(input_path, output_path=None, remove_all_header=None):
+def clean_pdf(input_path, output_path=None):
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"找不到文件: {input_path}")
 
@@ -303,13 +271,10 @@ def clean_pdf(input_path, output_path=None, remove_all_header=None):
         output_path = build_output_path(input_path)
 
     config = load_config()
-    if remove_all_header is not None:
-        config["remove_all_header_content"] = remove_all_header
     if not config["metadata_keywords"]:
         config["metadata_keywords"] = DEFAULT_KEYWORDS
 
     doc = fitz.open(input_path)
-    clean_page_content(doc, config["metadata_keywords"], remove_all_header=config.get("remove_all_header_content", False))
     clean_standard_metadata(doc, config)
 
     output_dir = os.path.dirname(os.path.abspath(output_path)) or os.getcwd()
